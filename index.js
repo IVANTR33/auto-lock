@@ -266,7 +266,7 @@ function generatePaginationButtons(currentPage, totalPages, prefix) {
   
 
 // ========== EVENTO LISTO ==========
-client.on('ready', async () => {
+client.on('clientReady', async () => {
   // Calcular métricas
   const totalGuilds = client.guilds.cache.size;
   const numberedChannels = client.guilds.cache.reduce((acc, guild) => {
