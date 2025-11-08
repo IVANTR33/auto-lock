@@ -14,23 +14,34 @@ module.exports = {
         }
 
         const searchPokemonString = searchPokemonNames.join(', '); // String para usar en el título del embed y respuestas
+        const pokemonCounts = {}; // Objeto para contar las coincidencias
 
         try {
             const lockedList = Array.from(lockedChannels.entries())
                 .map(([id, data]) => {
                     const channel = client.channels.cache.get(id);
 
-                    // 2. Lógica de filtrado: Debe estar en el servidor actual Y su Pokémon debe incluir AL MENOS UNO de los nombres buscados.
+                    // Lógica de filtrado
                     const isServerMatch = channel && channel.guild.id === message.guild.id;
-                    const isPokemonMatch = searchPokemonNames.some(searchName => 
-                        data.pokemon.toLowerCase().includes(searchName)
-                    );
+                    
+                    let matchedName = null;
+                    const isPokemonMatch = searchPokemonNames.some(searchName => {
+                        if (data.pokemon.toLowerCase().includes(searchName)) {
+                            // Encontramos una coincidencia. Almacenamos el nombre buscado para contar.
+                            matchedName = searchName; 
+                            return true;
+                        }
+                        return false;
+                    });
                     
                     if (isServerMatch && isPokemonMatch) {
+                        // Incrementar el contador para el Pokémon que coincidió
+                        pokemonCounts[matchedName] = (pokemonCounts[matchedName] || 0) + 1;
+
                         return {
                             id,
                             channelName: channel.name,
-                            pokemon: data.pokemon,
+                            pokemon: data.pokemon, // El nombre exacto en el bloqueo
                             type: data.type === 'private' ? 'Privado' : 'Público'
                         };
                     } else {
@@ -47,6 +58,13 @@ module.exports = {
             const itemsPerPage = 5;
             const totalPages = Math.ceil(lockedList.length / itemsPerPage);
 
+            const getCountSummary = () => {
+                // Genera el texto de resumen de conteo
+                return Object.entries(pokemonCounts)
+                    .map(([name, count]) => `**${name.charAt(0).toUpperCase() + name.slice(1)}**: ${count}`)
+                    .join(' | ');
+            };
+
             const generateEmbed = (currentPage) => {
                 const start = currentPage * itemsPerPage;
                 const end = start + itemsPerPage;
@@ -54,9 +72,9 @@ module.exports = {
 
                 const embed = new EmbedBuilder()
                     .setColor(0x0099FF)
-                    // 3. Título ajustado para múltiples Pokémon
-                    .setTitle(`🔍 Bloqueos locales coincidentes (${lockedList.length})`)
-                    .setDescription(`Búsqueda: **${searchPokemonString}**\n\n` + 
+                    .setTitle(`🔍 Bloqueos locales coincidentes (${lockedList.length} Canales)`)
+                    .setDescription(
+                        `*Coincidencias por Pokémon:* ${getCountSummary()}\n\n` + // Aquí se muestra el conteo
                         currentItems.map(item =>
                             `🔒 **${item.pokemon}** (Canal ${item.channelName})\n` +
                             `• Tipo: ${item.type}\n` +
@@ -73,7 +91,8 @@ module.exports = {
                 lockedList,
                 itemsPerPage,
                 totalPages,
-                pokemon: searchPokemonString, // Guardamos el string de búsqueda
+                pokemon: searchPokemonString, 
+                pokemonCounts, // Guardamos el conteo para la paginación
                 messageAuthorId: message.author.id,
                 commandName: 'ls',
                 customPrefix: 'ls_'
@@ -112,11 +131,18 @@ module.exports = {
         const end = start + state.itemsPerPage;
         const currentItems = state.lockedList.slice(start, end);
 
-        // 4. Se ha cambiado el título y añadido el campo de búsqueda
+        const getCountSummary = () => {
+            // Genera el texto de resumen de conteo (usando el estado guardado)
+            return Object.entries(state.pokemonCounts)
+                .map(([name, count]) => `**${name.charAt(0).toUpperCase() + name.slice(1)}**: ${count}`)
+                .join(' | ');
+        };
+
         const embed = new EmbedBuilder()
             .setColor(0x0099FF)
-            .setTitle(`🔍 Bloqueos locales coincidentes (${state.lockedList.length})`)
-            .setDescription(`Búsqueda: **${state.pokemon}**\n\n` + 
+            .setTitle(`🔍 Bloqueos locales coincidentes (${state.lockedList.length} Canales)`)
+            .setDescription(
+                `*Coincidencias por Pokémon:* ${getCountSummary()}\n\n` + // Se muestra el conteo
                 currentItems.map(item =>
                     `🔒 **${item.pokemon}** (Canal ${item.channelName})\n` +
                     `• Tipo: ${item.type}\n` +
