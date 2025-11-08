@@ -2,37 +2,52 @@ const { EmbedBuilder, PermissionsBitField } = require('discord.js');
 
 module.exports = {
     name: 'gls',
-    description: 'Busca canales bloqueados por uno o varios Pokémon específicos en todos los servidores.',
+    description: 'Busca canales bloqueados por uno o varios Pokémon específicos en todos los servidores, mostrando un conteo individual.',
     async execute(client, message, args, { lockedChannels, paginationStates, generatePaginationButtons }) {
         // 1. Parsear los argumentos: dividir por coma, limpiar espacios y convertir a minúsculas
         const searchPokemonNames = args.join(' ').toLowerCase().split(',')
             .map(p => p.trim())
-            .filter(p => p.length > 0); // Filtrar cadenas vacías
+            .filter(p => p.length > 0); 
 
         if (searchPokemonNames.length === 0) {
             return message.reply('❌ Proporciona uno o más nombres de Pokémon separados por comas para buscar (ej: `!gls pichu, pikachu`).');
         }
 
-        const searchPokemonString = searchPokemonNames.join(', '); // String para usar en el título del embed y respuestas
+        const searchPokemonString = searchPokemonNames.join(', ');
+        const pokemonCounts = {}; 
+
+        // Inicializar el conteo de todos los Pokémon buscados a 0
+        searchPokemonNames.forEach(name => {
+            pokemonCounts[name] = 0;
+        });
 
         try {
             const lockedList = Array.from(lockedChannels.entries())
                 .map(([id, data]) => {
                     const channel = client.channels.cache.get(id);
                     if (!channel) return null;
-
-                    // 2. Lógica de filtrado: el canal se incluye si su Pokémon incluye AL MENOS UNO de los nombres buscados.
-                    const isMatch = searchPokemonNames.some(searchName => 
-                        data.pokemon.toLowerCase().includes(searchName)
-                    );
+                    
+                    let matchedName = null;
+                    // Lógica de filtrado
+                    const isMatch = searchPokemonNames.some(searchName => {
+                        if (data.pokemon.toLowerCase().includes(searchName)) {
+                            // Almacenamos el nombre buscado que coincidió para incrementar su contador.
+                            matchedName = searchName;
+                            return true;
+                        }
+                        return false;
+                    });
                     
                     if (isMatch) {
+                        // Incrementar el contador
+                        pokemonCounts[matchedName]++; 
+
                         return {
                             id,
                             guildId: channel.guild.id,
                             channelName: channel.name,
                             guildName: channel.guild.name,
-                            pokemon: data.pokemon,
+                            pokemon: data.pokemon, // Nombre completo del Pokémon bloqueado
                             type: data.type === 'private' ? 'Privado' : 'Público'
                         };
                     } else {
@@ -42,40 +57,55 @@ module.exports = {
                 .filter(item => item !== null)
                 .sort((a, b) => a.pokemon.localeCompare(b.pokemon));
 
-            if (lockedList.length === 0) {
-                return message.reply(`No hay canales bloqueados que coincidan con "${searchPokemonString}" en ningún servidor.`);
-            }
+            // Función para generar el resumen de conteo
+            const getCountSummary = (names, counts) => {
+                // Iterar sobre la lista de nombres para asegurar que todos aparezcan
+                return names
+                    .map(name => `**${name.charAt(0).toUpperCase() + name.slice(1)}**: ${counts[name] || 0}`)
+                    .join(' | ');
+            };
 
             const itemsPerPage = 5;
-            const totalPages = Math.ceil(lockedList.length / itemsPerPage);
+            const totalPages = Math.ceil(lockedList.length / itemsPerPage) || 1; 
 
             const generateEmbed = (currentPage) => {
                 const start = currentPage * itemsPerPage;
                 const end = start + itemsPerPage;
                 const currentItems = lockedList.slice(start, end);
+                const summary = getCountSummary(searchPokemonNames, pokemonCounts);
 
                 const embed = new EmbedBuilder()
                     .setColor(0x0099FF)
-                    // 3. Título ajustado para múltiples Pokémon
-                    .setTitle(`🌍 Bloqueos globales coincidentes (${lockedList.length})`)
-                    .setDescription(`Búsqueda: **${searchPokemonString}**\n\n` + 
-                        currentItems.map(item => 
-                            `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
-                            `• Tipo: ${item.type}\n` +
-                            `• [Ir al Canal](https://discord.com/channels/${item.guildId}/${item.id})`
-                        ).join('\n\n')
+                    .setTitle(`🌍 Bloqueos globales coincidentes (${lockedList.length} Canales)`)
+                    .setDescription(
+                         `*Coincidencias por Pokémon:* ${summary}\n\n` + 
+                        (lockedList.length > 0 ? 
+                            currentItems.map(item => 
+                                `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
+                                `• Tipo: ${item.type}\n` +
+                                `• [Ir al Canal](https://discord.com/channels/${item.guildId}/${item.id})`
+                            ).join('\n\n')
+                         : '*No se encontraron canales bloqueados que coincidan con los términos buscados.*')
                     )
                     .setFooter({ text: `Página ${currentPage + 1} de ${totalPages}` });
 
                 return embed;
             };
+            
+            // Caso especial para respuesta sin resultados
+            if (lockedList.length === 0) {
+                 return message.reply({ embeds: [generateEmbed(0)] });
+            }
+
 
             const initialState = { 
                 currentPage: 0,
                 lockedList,
                 itemsPerPage,
                 totalPages,
-                pokemon: searchPokemonString, // Guardamos el string de búsqueda
+                pokemon: searchPokemonString, 
+                pokemonCounts, 
+                searchPokemonNames, // Guardamos la lista de nombres para la paginación
                 messageAuthorId: message.author.id,
                 commandName: 'gls',
                 customPrefix: 'gls_'
@@ -106,7 +136,6 @@ module.exports = {
         } else if (interaction.customId === 'gls_next_page' && state.currentPage < state.totalPages - 1) {
             state.currentPage++;
         } else if (interaction.customId === 'gls_close_list') {
-            // Ya no es necesario, el primer if lo maneja. Se deja aquí por si acaso, aunque es redundante.
             paginationStates.delete(interaction.message.id);
             return interaction.message.delete().catch(() => interaction.update({ components: [] }));
         }
@@ -114,12 +143,20 @@ module.exports = {
         const start = state.currentPage * state.itemsPerPage;
         const end = start + state.itemsPerPage;
         const currentItems = state.lockedList.slice(start, end);
+        
+        // Función para generar el resumen de conteo (repetida para la paginación)
+        const getCountSummary = (names, counts) => {
+            return names
+                .map(name => `**${name.charAt(0).toUpperCase() + name.slice(1)}**: ${counts[name] || 0}`)
+                .join(' | ');
+        };
+        const summary = getCountSummary(state.searchPokemonNames, state.pokemonCounts);
 
-        // 4. Se ha cambiado el título y añadido el campo de búsqueda
         const embed = new EmbedBuilder()
             .setColor(0x0099FF)
-            .setTitle(`🌍 Bloqueos globales coincidentes (${state.lockedList.length})`)
-            .setDescription(`Búsqueda: **${state.pokemon}**\n\n` + 
+            .setTitle(`🌍 Bloqueos globales coincidentes (${state.lockedList.length} Canales)`)
+            .setDescription(
+                `*Coincidencias por Pokémon:* ${summary}\n\n` + 
                 currentItems.map(item =>
                     `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
                     `• Tipo: ${item.type}\n` +
