@@ -2,33 +2,48 @@ const { EmbedBuilder, PermissionsBitField } = require('discord.js');
 
 module.exports = {
     name: 'gls',
-    description: 'Busca canales bloqueados por un Pokémon específico en todos los servidores.',
+    description: 'Busca canales bloqueados por uno o varios Pokémon específicos en todos los servidores.',
     async execute(client, message, args, { lockedChannels, paginationStates, generatePaginationButtons }) {
-        const pokemon = args.join(' ').toLowerCase();
-        if (!pokemon) {
-            return message.reply('❌ Proporciona un nombre de Pokémon para buscar.');
+        // 1. Parsear los argumentos: dividir por coma, limpiar espacios y convertir a minúsculas
+        const searchPokemonNames = args.join(' ').toLowerCase().split(',')
+            .map(p => p.trim())
+            .filter(p => p.length > 0); // Filtrar cadenas vacías
+
+        if (searchPokemonNames.length === 0) {
+            return message.reply('❌ Proporciona uno o más nombres de Pokémon separados por comas para buscar (ej: `!gls pichu, pikachu`).');
         }
+
+        const searchPokemonString = searchPokemonNames.join(', '); // String para usar en el título del embed y respuestas
 
         try {
             const lockedList = Array.from(lockedChannels.entries())
                 .map(([id, data]) => {
                     const channel = client.channels.cache.get(id);
                     if (!channel) return null;
+
+                    // 2. Lógica de filtrado: el canal se incluye si su Pokémon incluye AL MENOS UNO de los nombres buscados.
+                    const isMatch = searchPokemonNames.some(searchName => 
+                        data.pokemon.toLowerCase().includes(searchName)
+                    );
                     
-                    return data.pokemon.toLowerCase().includes(pokemon) ? {
-                        id,
-                        guildId: channel.guild.id,
-                        channelName: channel.name,
-                        guildName: channel.guild.name,
-                        pokemon: data.pokemon,
-                        type: data.type === 'private' ? 'Privado' : 'Público'
-                    } : null;
+                    if (isMatch) {
+                        return {
+                            id,
+                            guildId: channel.guild.id,
+                            channelName: channel.name,
+                            guildName: channel.guild.name,
+                            pokemon: data.pokemon,
+                            type: data.type === 'private' ? 'Privado' : 'Público'
+                        };
+                    } else {
+                        return null;
+                    }
                 })
                 .filter(item => item !== null)
                 .sort((a, b) => a.pokemon.localeCompare(b.pokemon));
 
             if (lockedList.length === 0) {
-                return message.reply(`No hay canales bloqueados por "${pokemon}" en ningún servidor.`);
+                return message.reply(`No hay canales bloqueados que coincidan con "${searchPokemonString}" en ningún servidor.`);
             }
 
             const itemsPerPage = 5;
@@ -41,16 +56,16 @@ module.exports = {
 
                 const embed = new EmbedBuilder()
                     .setColor(0x0099FF)
-                    .setTitle(`🌍 Lista de Bloqueos globales "${pokemon}" (${lockedList.length})`)
+                    // 3. Título ajustado para múltiples Pokémon
+                    .setTitle(`🌍 Bloqueos globales coincidentes (${lockedList.length})`)
+                    .setDescription(`Búsqueda: **${searchPokemonString}**\n\n` + 
+                        currentItems.map(item => 
+                            `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
+                            `• Tipo: ${item.type}\n` +
+                            `• [Ir al Canal](https://discord.com/channels/${item.guildId}/${item.id})`
+                        ).join('\n\n')
+                    )
                     .setFooter({ text: `Página ${currentPage + 1} de ${totalPages}` });
-
-                embed.setDescription(
-                    currentItems.map(item => 
-                        `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
-                        `• Tipo: ${item.type}\n` +
-                        `• [Ir al Canal](https://discord.com/channels/${item.guildId}/${item.id})`
-                    ).join('\n\n')
-                );
 
                 return embed;
             };
@@ -60,7 +75,7 @@ module.exports = {
                 lockedList,
                 itemsPerPage,
                 totalPages,
-                pokemon,
+                pokemon: searchPokemonString, // Guardamos el string de búsqueda
                 messageAuthorId: message.author.id,
                 commandName: 'gls',
                 customPrefix: 'gls_'
@@ -91,6 +106,7 @@ module.exports = {
         } else if (interaction.customId === 'gls_next_page' && state.currentPage < state.totalPages - 1) {
             state.currentPage++;
         } else if (interaction.customId === 'gls_close_list') {
+            // Ya no es necesario, el primer if lo maneja. Se deja aquí por si acaso, aunque es redundante.
             paginationStates.delete(interaction.message.id);
             return interaction.message.delete().catch(() => interaction.update({ components: [] }));
         }
@@ -99,10 +115,11 @@ module.exports = {
         const end = start + state.itemsPerPage;
         const currentItems = state.lockedList.slice(start, end);
 
+        // 4. Se ha cambiado el título y añadido el campo de búsqueda
         const embed = new EmbedBuilder()
             .setColor(0x0099FF)
-            .setTitle(`🌍 Canales globales bloqueados "${state.pokemon}" (${state.lockedList.length})`)
-            .setDescription(
+            .setTitle(`🌍 Bloqueos globales coincidentes (${state.lockedList.length})`)
+            .setDescription(`Búsqueda: **${state.pokemon}**\n\n` + 
                 currentItems.map(item =>
                     `🔒 **${item.pokemon}** (${item.guildName} - ${item.channelName})\n` +
                     `• Tipo: ${item.type}\n` +
